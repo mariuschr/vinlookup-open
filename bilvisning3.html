@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bilvisning</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+</head>
+<body class="bg-gray-100 min-h-screen py-10 px-4">
+  <style>
+  .utstyrstabell {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+  }
+  .utstyrstabell th, .utstyrstabell td {
+    border: 1px solid #ccc;
+    padding: 6px 10px;
+    text-align: left;
+  }
+  .no-select {
+    user-select: none;
+  }
+  .selectable {
+    user-select: text;
+  }
+  .font-bold {
+    font-weight: bold;
+  }
+  #lightbox {
+  transition: opacity 0.2s ease;
+}
+
+</style>
+
+  <div class="max-w-4xl mx-auto bg-white shadow-md rounded-lg p-6 space-y-6">
+    <h1 class="text-2xl font-bold text-blue-700">Bilvisning</h1>
+
+    <div class="md:flex md:items-start md:gap-6">
+      <div id="resultat" class="space-y-6 flex-1"></div>
+    </div>
+    <div class="flex justify-end mb-4">
+      <button id="downloadAdBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
+        Last ned annonsebilder
+      </button>
+    </div>
+    <div id="bilder" class="grid grid-cols-2 md:grid-cols-3 gap-4"></div>
+  </div>
+
+<div id="lightbox" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center hidden z-50">
+  <div class="relative max-w-[85%] max-h-[85%]">
+    <img id="lightbox-img" class="w-full h-full object-contain rounded shadow-lg cursor-pointer" />
+    <img src="img/overlay_bottom_moller.png" class="absolute bottom-0 left-0 w-full pointer-events-none" />
+  </div>
+</div>
+
+
+
+  <script>
+    const supabaseUrl = 'https://nzumwlptqrwbpenoxrkf.supabase.co';
+    const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56dW13bHB0cXJ3YnBlbm94cmtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3MjE3OTAsImV4cCI6MjA2MDI5Nzc5MH0.TrYL14oyXfZKG708kyNI2TqzF2hDLkR_MpAIw-LiJ_M'; // forkortet for eksempel
+    const { createClient } = supabase;
+    const supabaseClient = createClient(supabaseUrl, supabaseKey);
+    let currentVin = null;
+
+    async function hentNorskFarge(fargeTysk) {
+      const res = await fetch(`/api/data?action=farge&farge_tysk=${encodeURIComponent(fargeTysk)}`);
+      const data = await res.json();
+      return data.farge_norsk || fargeTysk || "Ukjent";
+    }
+
+    async function hentOgVisBilder(vin) {
+  const bilderRes = await fetch(`/api/data?action=bilder&vin=${vin}`);
+  const { bilder } = await bilderRes.json();
+  const bildeContainer = document.getElementById("bilder");
+
+  bildeContainer.innerHTML = "";
+
+  if (!bilder || bilder.length === 0) return;
+
+
+
+  // 👇 Vis alle bilder nederst
+  bilder.forEach(bilde => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "relative";
+
+    const mainImg = document.createElement("img");
+    mainImg.src = bilde.url;
+    mainImg.alt = bilde.label;
+    mainImg.className = "rounded shadow w-full cursor-pointer";
+
+    mainImg.addEventListener("click", () => {
+      document.getElementById("lightbox-img").src = bilde.url;
+      document.getElementById("lightbox").classList.remove("hidden");
+    });
+
+    const overlay = document.createElement("img");
+    overlay.src = "img/overlay_bottom_moller.png";
+    overlay.className = "absolute bottom-0 left-0 w-full pointer-events-none";
+
+    wrapper.appendChild(mainImg);
+    wrapper.appendChild(overlay);
+    bildeContainer.appendChild(wrapper);
+  });
+}
+
+async function generateAdImages(vin) {
+  const overlayBottomSrc = "img/overlay_bottom.png";
+  const backgroundSrc = "img/bg.jpg";
+
+  const overlayBottom = await loadImage(overlayBottomSrc);
+  const background = await loadImage(backgroundSrc);
+
+  const response = await fetch(`${supabaseUrl}/rest/v1/scv_bilder?vin=eq.${vin}&select=uri`, {
+    headers: {
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`
+    }
+  });
+
+  const data = await response.json();
+  if (data.length === 0) {
+    alert("Fant ingen SCV-bilder for denne bilen.");
+    return;
+  }
+
+  const zip = new JSZip();
+
+  for (let i = 0; i < data.length; i++) {
+    const url = data[i].uri;
+    const label = `bilde${i + 1}`;
+    const carImage = await loadImage(url);
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = carImage.width;
+    canvas.height = carImage.height;
+
+    ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+
+    let finalCarImage = carImage;
+
+    if (url.includes("audi.com")) {
+      const tempCanvas = document.createElement("canvas");
+      const tempCtx = tempCanvas.getContext("2d");
+      tempCanvas.width = carImage.width;
+      tempCanvas.height = carImage.height;
+      tempCtx.drawImage(carImage, 0, 0);
+
+      const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      const dataArr = imageData.data;
+
+      for (let j = 0; j < dataArr.length; j += 4) {
+        const [r, g, b] = [dataArr[j], dataArr[j + 1], dataArr[j + 2]];
+        if (r > 240 && g > 240 && b > 240) {
+          dataArr[j + 3] = 0;
+        }
+      }
+
+      tempCtx.putImageData(imageData, 0, 0);
+      finalCarImage = await new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.src = tempCanvas.toDataURL("image/png");
+      });
+    }
+
+    ctx.drawImage(finalCarImage, 0, 0, canvas.width, canvas.height);
+
+    const bottomHeight = (canvas.width / overlayBottom.width) * overlayBottom.height;
+    ctx.drawImage(overlayBottom, 0, canvas.height - bottomHeight, canvas.width, bottomHeight);
+
+    const padding = 40;
+    const boxWidth = 520;
+    const boxHeight = 120;
+    ctx.fillStyle = "rgba(0, 43, 92, 0.85)";
+    ctx.fillRect(padding, padding, boxWidth, boxHeight);
+    ctx.fillStyle = "white";
+    ctx.font = "bold 36px sans-serif";
+    ctx.fillText("ℹ️ Animerte bilder –", padding + 20, padding + 45);
+    ctx.font = "28px sans-serif";
+    ctx.fillText("kun ment som illustrasjon", padding + 20, padding + 85);
+
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+    zip.file(`${vin}_${label}.png`, blob);
+  }
+
+  const blob = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${vin}_bilder.zip`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+
+    function loadImage(src) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Kunne ikke laste bilde: " + src));
+        img.src = src;
+      });
+    }
+
+
+  function getVinFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("vin")?.toUpperCase() || null;
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const vin = getVinFromUrl();
+    if (vin) {
+      currentVin = vin;
+      hentBil(vin);
+    }
+
+    const btn = document.getElementById("downloadAdBtn");
+    btn.addEventListener("click", async () => {
+      if (!currentVin) return;
+      btn.disabled = true;
+      try {
+        await generateAdImages(currentVin);
+      } catch (err) {
+        console.error("Feil ved generering av annonsebilder:", err);
+      }
+      btn.disabled = false;
+    });
+  });
+
+  async function hentBil(vin) {
+    const container = document.getElementById("resultat");
+    const bildeContainer = document.getElementById("bilder");
+    container.innerHTML = "";
+    bildeContainer.innerHTML = "";
+
+    const { data, error } = await supabaseClient
+      .from('bilvisning_full_view')
+      .select('*')
+      .eq('vin', vin)
+      .single();
+
+    if (error || !data) {
+      container.innerHTML = `<div class="text-red-600 font-semibold">❌ Fant ikke bil med VIN: ${vin}</div>`;
+      return;
+    }
+
+    const co2Text = data.co2 !== null ? `${data.co2} g/km` : '–';
+    const nox = data.nox ?? data.nox_generisk;
+    const vekt = data.egenvekt_minimum ?? data.vekt_generisk;
+
+    container.innerHTML = `
+      <div>
+        <h2 class="text-xl font-semibold text-gray-800 mb-2">🚗 Bilinformasjon</h2>
+        <p><strong>VIN:</strong> ${data.vin}</p>
+        <p><strong>Bilmodell:</strong> ${data.bilmodell}</p>
+        <p><strong>Markedsmodell:</strong> ${data.model}</p>
+        <p><strong>Farge:</strong> ${data.fargevisning}</p>
+        <p><strong>Km-stand:</strong> ${data.mileage?.toLocaleString('no-NO') || '–'} km</p>
+        <p><strong>Førstereg. (prospekt):</strong> ${data.first_reg_prospect || '–'}</p>
+        <p><strong>Førstereg. Norge:</strong> ${data.forstegang_registrert_norge || '–'}</p>
+        <p><strong>Modellår:</strong> ${data.model_year || '–'}</p>
+        <p><strong>CO₂:</strong> ${co2Text}</p>
+        <p><strong>NOx:</strong> ${nox ?? '–'} mg/km</p>
+        <p><strong>Vekt:</strong> ${vekt ?? '–'} kg</p>
+      </div>
+
+      <div class="mt-6">
+        <h3 class="text-lg font-semibold text-gray-700">💰 Avgift</h3>
+        <p><strong>Avgift nå:</strong> ${Number(data.avgift_nå || 0).toLocaleString('no-NO')} kr</p>
+        <p><strong>Avgift neste:</strong> ${Number(data.avgift_neste || 0).toLocaleString('no-NO')} kr</p>
+        <p><strong>Dato neste:</strong> ${data.dato_neste || '–'}</p>
+
+        ${data.bruker_generiske_avgiftsdata ? `
+          <div class="mt-4 p-3 bg-yellow-100 border-l-4 border-yellow-400 text-yellow-800 rounded">
+            ⚠ Det er brukt generiske avgiftsdata basert på modell. Faktisk avgift kan avvike.
+          </div>` : ''
+        }
+
+        ${data.co2_mangler ? `
+          <div class="mt-2 p-3 bg-red-100 border-l-4 border-red-500 text-red-700 rounded">
+            ❗ CO₂-data mangler – avgift kan ikke beregnes.
+          </div>` : ''
+        }
+      </div>
+
+      <div class="mt-6">
+  <h3 class="text-lg font-semibold text-gray-700">📣 Salgstekst</h3>
+  <div id="salgstekst_container" class="mb-4 text-gray-800"></div>
+  <button id="generateSalesTextBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">
+    Generer salgstekst
+  </button>
+</div>
+
+
+      <div class="mt-6">
+        <h3 class="text-lg font-semibold text-gray-700">🧩 Utstyr</h3>
+        <div id="utstyrstabell_container"></div>
+      </div>
+    `;
+
+
+      await hentOgVisBilder(vin);
+      // 🧩 Bygg utstyrstabell
+
+      // Hent og vis takst-PDF via signed URL
+const takstUrl = await generateTUVReportLink(vin, supabaseClient);
+
+
+if (takstUrl) {
+  const takstContainer = document.createElement("div");
+  takstContainer.className = "mt-6";
+
+takstContainer.innerHTML = `
+  <div class="flex items-center justify-between mb-2">
+    <h3 class="text-lg font-semibold text-gray-700">📄 Takstrapport</h3>
+    <a href="${takstUrl}" target="_blank" download class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1 rounded text-sm">
+      Last ned takst
+    </a>
+  </div>
+  <div class="w-full max-w-full aspect-[4/5]">
+    <iframe
+      src="${takstUrl}"
+      class="w-full h-[80vh] rounded border"
+      frameborder="0"
+      allowfullscreen
+    ></iframe>
+  </div>
+  `;
+
+  document.getElementById("bilder").after(takstContainer);
+}
+
+      
+    try {
+      const utstyr = Array.isArray(data.utstyrstekst)
+        ? data.utstyrstekst
+        : JSON.parse(data.utstyrstekst || "[]");
+
+      if (Array.isArray(utstyr) && utstyr.length) {
+        utstyr.sort((a, b) => (b.verdi || 0) - (a.verdi || 0));
+
+        const table = document.createElement("table");
+        table.classList.add("utstyrstabell");
+
+        const thead = document.createElement("thead");
+        thead.innerHTML = `<tr>
+          <th>PR-kode</th>
+          <th>Beskrivelse</th>
+          <th class="pdf-hide">Verdi</th>
+        </tr>`;
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        const manglendeOversettelser = [];
+
+        utstyr.forEach(({ pr_kode, beskrivelse, verdi }) => {
+          if (!beskrivelse) {
+            if (pr_kode) manglendeOversettelser.push(pr_kode);
+            return;
+          }
+
+          const row = document.createElement("tr");
+          const bold = verdi === 5 ? 'font-bold' : '';
+
+          row.innerHTML = `
+            <td class="no-select">${pr_kode || ""}</td>
+            <td class="selectable ${bold}">${beskrivelse}</td>
+            <td class="no-select pdf-hide">${verdi !== null ? verdi : ""}</td>
+          `;
+          tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        const container = document.getElementById("utstyrstabell_container");
+        container.appendChild(table);
+
+        if (manglendeOversettelser.length > 0) {
+          const infoText = document.createElement("p");
+          infoText.className = "mt-2 text-sm text-gray-600";
+          infoText.textContent = `Bilen har ${manglendeOversettelser.length} PR-koder som mangler oversettelse: ${manglendeOversettelser.map(kode => `${kode}`).join(", ")}`;
+          container.appendChild(infoText);
+        }
+      } else {
+        document.getElementById("utstyrstabell_container").innerHTML = `<p>–</p>`;
+      }
+    } catch (e) {
+      console.error("Feil i utstyrsvisning:", e);
+      document.getElementById("utstyrstabell_container").innerHTML = `<p>–</p>`;
+    }
+document.getElementById("generateSalesTextBtn")?.addEventListener("click", async () => {
+  const container = document.getElementById("salgstekst_container");
+  container.innerHTML = "Genererer tekst...";
+
+  try {
+    const utstyr = Array.isArray(data.utstyrstekst)
+      ? data.utstyrstekst
+      : JSON.parse(data.utstyrstekst || "[]");
+
+    const topUtstyr = utstyr
+      .filter(u => u.verdi !== null && u.beskrivelse)
+      .sort((a, b) => (b.verdi || 0) - (a.verdi || 0))
+      .slice(0, 5)
+      .map(u => u.beskrivelse);
+
+    const res = await fetch("/api/generatesalestext.js", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: data.bilmodell,
+        color: data.fargevisning,
+        topUtstyr
+      })
+    });
+
+    const json = await res.json();
+    container.innerHTML = `<p class="selectable whitespace-pre-line">${json.text || "Ingen tekst generert."}</p>`;
+  } catch (err) {
+    console.error("Feil ved generering av salgstekst:", err);
+    container.innerHTML = "Feil under generering av salgstekst.";
+  }
+});
+
+    }
+document.getElementById("lightbox").addEventListener("click", () => {
+  const lightbox = document.getElementById("lightbox");
+  const lightboxImg = document.getElementById("lightbox-img");
+  lightbox.classList.add("hidden");
+  lightboxImg.src = "";
+});
+
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="/js/generateTUVReportLink.js"></script>
+    
+
+</body>
+</html>

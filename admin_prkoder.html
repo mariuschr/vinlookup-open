@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <title>Administrer PR-koder</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #ccc; padding: 0.5rem; }
+    th { background: #f0f0f0; }
+    textarea { width: 100%; margin-top: 1rem; }
+    input[type="text"], input[type="number"], select { width: 100%; }
+    button { cursor: pointer; }
+    #nyModellForm { display: none; margin-top: 1rem; padding: 1rem; border: 1px solid #aaa; background: #f9f9f9; }
+  </style>
+</head>
+<body>
+  <h1>Administrer PR-koder</h1>
+
+  <label for="modellVelger">Velg bilmodell:</label>
+  <select id="modellVelger"></select>
+  <button id="nyModellBtn">+ Legg til ny bilmodell</button>
+
+  <div id="nyModellForm">
+    <label>Årsmodell: <input type="text" id="nyAar"></label>
+    <label>Merke: <input type="text" id="nyMerke"></label>
+    <label>Modell: <input type="text" id="nyModell"></label>
+    <button id="lagreModellBtn">Lagre bilmodell</button>
+  </div>
+
+  <h2>PR-koder</h2>
+  <table id="prKodeTabell">
+    <thead>
+      <tr>
+        <th>PR-kode</th>
+        <th>Beskrivelse (norsk)</th>
+        <th>Verdi</th>
+        <th>Handling</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <button id="leggTilRadBtn">+ Legg til ny PR-kode</button>
+
+  <h2>Bulk-innliming</h2>
+  <textarea id="bulkInput" rows="8" placeholder="PR-kode, Beskrivelse, Verdi (valgfritt)"></textarea>
+  <button id="importBtn">Importer</button>
+
+<script>
+const supabaseUrl = 'https://nzumwlptqrwbpenoxrkf.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im56dW13bHB0cXJ3YnBlbm94cmtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3MjE3OTAsImV4cCI6MjA2MDI5Nzc5MH0.TrYL14oyXfZKG708kyNI2TqzF2hDLkR_MpAIw-LiJ_M';
+const { createClient } = supabase;
+const supabaseClient = createClient(supabaseUrl, supabaseKey);
+
+let valgtModell = null;
+
+async function hentModeller() {
+  const { data, error } = await supabaseClient
+    .from('pr_koder')
+    .select('model_year, brand, model_base')
+    .neq('pr_code', null);
+
+  if (error) return alert('Feil ved henting av modeller');
+
+  const unikeModeller = [...new Set(data.map(row => `${row.model_year}|${row.brand}|${row.model_base}`))];
+
+  const select = document.getElementById('modellVelger');
+  select.innerHTML = '<option disabled selected>Velg modell</option>';
+  unikeModeller.forEach(modell => {
+    const [år, merke, base] = modell.split('|');
+    const opt = document.createElement('option');
+    opt.value = modell;
+    opt.textContent = `${merke} ${base} (${år})`;
+    select.appendChild(opt);
+  });
+}
+
+async function hentPRkoderForModell(modelKey) {
+  valgtModell = modelKey;
+  const [år, merke, base] = modelKey.split('|');
+  const { data, error } = await supabaseClient
+    .from('pr_koder')
+    .select('*')
+    .eq('model_year', år)
+    .eq('brand', merke)
+    .eq('model_base', base);
+
+  const tbody = document.querySelector('#prKodeTabell tbody');
+  tbody.innerHTML = '';
+  data.forEach(row => leggTilRadITabell(row));
+}
+
+function leggTilRadITabell(row) {
+  const tbody = document.querySelector('#prKodeTabell tbody');
+  const tr = document.createElement('tr');
+  const erNy = !row.id;
+  tr.innerHTML = `
+    <td><input type="text" value="${row.pr_code || ''}" data-id="${row.id || ''}" data-field="pr_code"></td>
+    <td><input type="text" value="${row.desc_norwegian || ''}" data-id="${row.id || ''}" data-field="desc_norwegian"></td>
+    <td><input type="number" value="${row.uc_valuation || ''}" data-id="${row.id || ''}" data-field="uc_valuation"></td>
+    <td>
+      ${erNy ? `<button onclick="lagreNyRad(this)">Lagre</button>` : `<button onclick="lagreEksisterendeRad(this)">Lagre</button> <button onclick="slettRad(${row.id})">Slett</button>`}
+    </td>
+  `;
+  tbody.appendChild(tr);
+}
+
+async function lagreEksisterendeRad(btn) {
+  const tr = btn.closest('tr');
+  const inputs = tr.querySelectorAll('input');
+  const id = inputs[0].dataset.id;
+  const oppdatering = {};
+  inputs.forEach(input => {
+    const field = input.dataset.field;
+    oppdatering[field] = field === 'uc_valuation' ? parseFloat(input.value) || null : input.value.trim();
+  });
+  const { error } = await supabaseClient.from('pr_koder').update(oppdatering).eq('id', id);
+  if (error) alert('Feil ved oppdatering');
+  else hentPRkoderForModell(valgtModell);
+}
+
+async function slettRad(id) {
+  const { error } = await supabaseClient.from('pr_koder').delete().eq('id', id);
+  if (!error) hentPRkoderForModell(valgtModell);
+  else alert('Feil ved sletting');
+}
+
+async function lagreNyRad(btn) {
+  if (!valgtModell) return alert('Velg bilmodell først');
+  const [år, merke, base] = valgtModell.split('|');
+  const tr = btn.closest('tr');
+  const inputs = tr.querySelectorAll('input');
+  const data = {};
+  inputs.forEach(input => {
+    const field = input.dataset.field;
+    data[field] = field === 'uc_valuation' ? parseFloat(input.value) || null : input.value.trim();
+  });
+  const nyRad = { model_year: år, brand: merke, model_base: base, ...data };
+  const { data: inserted, error } = await supabaseClient.from('pr_koder').insert(nyRad).select();
+  if (!error && inserted.length > 0) hentPRkoderForModell(valgtModell);
+  else alert('Feil ved lagring');
+}
+
+async function importerBulk() {
+  if (!valgtModell) return alert('Velg bilmodell først');
+  const [år, merke, base] = valgtModell.split('|');
+  const input = document.getElementById('bulkInput').value.trim();
+  const rader = input.split('\n').map(linje => linje.split(',').map(f => f.trim()));
+  const nyedata = rader.map(([kode, beskrivelse, verdi]) => ({
+    model_year: år,
+    brand: merke,
+    model_base: base,
+    pr_code: kode,
+    desc_norwegian: beskrivelse,
+    uc_valuation: verdi ? parseFloat(verdi) : null
+  }));
+  const { error } = await supabaseClient.from('pr_koder').insert(nyedata);
+  if (!error) {
+    hentPRkoderForModell(valgtModell);
+    document.getElementById('bulkInput').value = '';
+  } else alert('Feil ved import');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  hentModeller();
+  document.getElementById('modellVelger').addEventListener('change', e => hentPRkoderForModell(e.target.value));
+  document.getElementById('importBtn').addEventListener('click', importerBulk);
+  document.getElementById('leggTilRadBtn').addEventListener('click', () => leggTilRadITabell({}));
+  document.getElementById('nyModellBtn').addEventListener('click', () => {
+    document.getElementById('nyModellForm').style.display = 'block';
+  });
+  document.getElementById('lagreModellBtn').addEventListener('click', () => {
+    const nyAar = document.getElementById('nyAar').value.trim();
+    const nyMerke = document.getElementById('nyMerke').value.trim();
+    const nyModell = document.getElementById('nyModell').value.trim();
+    if (!nyAar || !nyMerke || !nyModell) return alert('Fyll ut alle felt');
+    const nyVerdi = `${nyAar}|${nyMerke}|${nyModell}`;
+    const select = document.getElementById('modellVelger');
+    const opt = document.createElement('option');
+    opt.value = nyVerdi;
+    opt.textContent = `${nyMerke} ${nyModell} (${nyAar})`;
+    select.appendChild(opt);
+    select.value = nyVerdi;
+    hentPRkoderForModell(nyVerdi);
+    document.getElementById('nyModellForm').style.display = 'none';
+  });
+});
+</script>
+</body>
+</html>
